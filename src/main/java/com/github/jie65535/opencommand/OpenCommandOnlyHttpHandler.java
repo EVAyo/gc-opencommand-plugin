@@ -21,8 +21,12 @@ import com.github.jie65535.opencommand.json.JsonRequest;
 import com.github.jie65535.opencommand.json.JsonResponse;
 import com.github.jie65535.opencommand.model.Client;
 import com.github.jie65535.opencommand.socket.SocketData;
-import emu.grasscutter.command.CommandMap;
-import emu.grasscutter.game.player.Player;
+import com.github.jie65535.opencommand.socket.SocketDataWait;
+import com.github.jie65535.opencommand.socket.SocketServer;
+import com.github.jie65535.opencommand.socket.packet.HttpPacket;
+import com.github.jie65535.opencommand.socket.packet.RunConsoleCommand;
+import com.github.jie65535.opencommand.socket.packet.player.Player;
+import com.github.jie65535.opencommand.socket.packet.player.PlayerEnum;
 import emu.grasscutter.server.http.Router;
 import emu.grasscutter.utils.Crypto;
 import emu.grasscutter.utils.Utils;
@@ -31,21 +35,19 @@ import io.javalin.http.Context;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 
-import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
 
-public final class OpenCommandHandler implements Router {
+public final class OpenCommandOnlyHttpHandler implements Router {
 
     @Override
     public void applyRoutes(Javalin javalin) {
-        javalin.post("/opencommand/api", OpenCommandHandler::handle);
+        javalin.post("/opencommand/api", OpenCommandOnlyHttpHandler::handle);
     }
 
     private static final Map<String, Integer> codes = new HashMap<>();
     private static final Int2ObjectMap<Date> codeExpireTime = new Int2ObjectOpenHashMap<>();
-
 
     public static void handle(Context context) {
         var plugin = OpenCommandPlugin.getInstance();
@@ -60,7 +62,7 @@ public final class OpenCommandHandler implements Router {
             var req = context.bodyAsClass(JsonRequest.class);
             if (req.action.equals("sendCode")) {
                 int playerId = (int)Double.parseDouble(req.data.toString());
-                var player = plugin.getServer().getPlayerByUid(playerId);
+                var player = SocketData.getPlayer(playerId);
                 if (player == null) {
                     context.json(new JsonResponse(404, "Player Not Found."));
                 } else {
@@ -79,17 +81,15 @@ public final class OpenCommandHandler implements Router {
                     codeExpireTime.put(playerId, new Date(now.getTime() + config.codeExpirationTime_S * 1000L));
                     codes.put(token, code);
                     data.addClient(new Client(token, playerId, new Date(now.getTime() + config.tempTokenExpirationTime_S * 1000L)));
-                    player.dropMessage("[Open Command] Verification code: " + code);
+                    Player.dropMessage(playerId, "[Open Command] Verification code: " + code);
                     context.json(new JsonResponse(token));
                 }
                 return;
             } else if (req.action.equals("ping")) {
-                context.json(new JsonResponse(plugin.getVersion()));
+                context.json(new JsonResponse());
                 return;
             } else if (req.action.equals("online")) {
-                var p = new ArrayList<String>();
-                plugin.getServer().getPlayers().forEach((uid, player) -> p.add(player.getNickname()));
-                context.json(new JsonResponse(200, "Success", new SocketData.OnlinePlayer(p)));
+                context.json(new JsonResponse(200, "Success", SocketData.getOnlinePlayer()));
                 return;
             }
 
@@ -110,23 +110,40 @@ public final class OpenCommandHandler implements Router {
                     context.json(new JsonResponse());
                     return;
                 } else if (req.action.equals("command")) {
-                    //noinspection SynchronizationOnLocalVariableOrMethodParameter
-                    synchronized (plugin) {
-                        try {
-                            plugin.getLogger().info(String.format("IP: %s run command in console > %s", context.ip(), req.data));
-                            var resultCollector = new StringBuilder();
-                            EventListeners.setConsoleMessageHandler(resultCollector);
-                            tryInvokeCommand(null, null, req.data.toString());
-                            context.json(new JsonResponse(resultCollector.toString()));
-                        } catch (Exception e) {
-                            plugin.getLogger().warn("Run command failed.", e);
-                            EventListeners.setConsoleMessageHandler(null);
-                            context.json(new JsonResponse(500, "error", e.getLocalizedMessage()));
-                        }
+                    var server = SocketServer.getClientInfoByUuid(req.server);
+                    if (server == null) {
+                        context.json(new JsonResponse(404, "Server Not Found."));
+                        return;
                     }
+                    plugin.getLogger().info(String.format("IP: %s run command in console > %s", context.ip(), req.data));
+                    var wait = new SocketDataWait<HttpPacket>(2000L) {
+                        @Override
+                        public void run() {
+                        }
+
+                        @Override
+                        public HttpPacket initData(HttpPacket data) {
+                            return data;
+                        }
+
+                        @Override
+                        public void timeout() {
+                        }
+                    };
+
+                    SocketServer.sendPacketAndWait(server.ip, new RunConsoleCommand(req.data.toString()), wait);
+                    var packet = wait.getData();
+                    if (packet == null) {
+                        context.json(new JsonResponse(408, "Timeout"));
+                        return;
+                    }
+                    context.json(new JsonResponse(packet.code, packet.message, packet.data));
+                    return;
+                } else if (req.action.equals("server")) {
+                    context.json(new JsonResponse(200, "Success", SocketServer.getOnlineClient()));
                     return;
                 } else if (req.action.equals("runmode")) {
-                    context.json(new JsonResponse(200, "Success", 0));
+                    context.json(new JsonResponse(200, "Success", 1));
                     return;
                 }
             } else if (codes.containsKey(req.token)) {
@@ -145,43 +162,47 @@ public final class OpenCommandHandler implements Router {
                 }
             } else {
                 if (req.action.equals("command")) {
+                    SocketDataWait<HttpPacket> socketDataWait = new SocketDataWait<>(1000L * 10L) {
+                        @Override
+                        public void run() {
+                        }
+
+                        @Override
+                        public HttpPacket initData(HttpPacket data) {
+                            return data;
+                        }
+
+                        @Override
+                        public void timeout() {
+                        }
+                    };
+
                     // update token expire time
                     client.tokenExpireTime = new Date(now.getTime() + config.tokenLastUseExpirationTime_H * 60L * 60L * 1000L);
-                    var player = plugin.getServer().getPlayerByUid(client.playerId);
-                    if (player == null) {
-                        context.json(new JsonResponse(404, "Player not found"));
+                    var command = req.data.toString();
+                    var player = new Player();
+                    player.uid = client.playerId;
+                    player.type = PlayerEnum.RunCommand;
+                    player.data = command;
+
+                    if (!SocketServer.sendUidPacketAndWait(client.playerId, player, socketDataWait)) {
+                        context.json(new JsonResponse(404, "Player Not Found."));
                         return;
                     }
-                    // Player MessageHandler do not support concurrency
-                    var handler = EventListeners.getPlayerMessageHandler(player.getUid());
-                    //noinspection SynchronizationOnLocalVariableOrMethodParameter
-                    synchronized (handler) {
-                        try {
-                            handler.setLength(0);
-                            tryInvokeCommand(player, player, req.data.toString());
-                            context.json(new JsonResponse(handler.toString()));
-                        } catch (Exception e) {
-                            plugin.getLogger().warn("Run command failed.", e);
-                            context.json(new JsonResponse(500, "error", e.getLocalizedMessage()));
-                        }
+
+
+                    HttpPacket httpPacket = socketDataWait.getData();
+                    if (httpPacket == null) {
+                        context.json(new JsonResponse(500, "error", "Wait timeout"));
+                        return;
                     }
+                    context.json(new JsonResponse(httpPacket.code, httpPacket.message));
                     return;
                 }
             }
             context.json(new JsonResponse(403, "forbidden"));
-        } catch (Throwable ex) {
+        } catch (Exception ex) {
             plugin.getLogger().error("[OpenCommand] handler error.", ex);
-        }
-    }
-
-    private static void tryInvokeCommand(Player sender, Player target, String rawMessage) {
-        for (var command : rawMessage.split("\n[/!]|\\|")) {
-            command = command.trim();
-            if (command.isEmpty()) continue;
-            if (command.charAt(0) == '/' || command.charAt(0) == '!') {
-                command = command.substring(1);
-            }
-            CommandMap.getInstance().invoke(sender, target, command);
         }
     }
 

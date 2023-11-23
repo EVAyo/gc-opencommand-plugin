@@ -15,29 +15,30 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-package com.github.jie65535.opencommand.json;
+package com.github.jie65535.opencommand.socket.packet.player;
 
-public final class JsonResponse {
-    public int retcode = 200;
-    public String message = "Success";
-    public Object data;
+import com.github.jie65535.opencommand.socket.packet.BasePacket;
+import com.github.jie65535.opencommand.socket.packet.PacketEnum;
+import emu.grasscutter.utils.JsonUtils;
 
-    public JsonResponse() {
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
+// 玩家列表信息
+public class PlayerList extends BasePacket {
+    public int player = -1;
+    public List<String> playerList = new ArrayList<>();
+    public Map<Integer, String> playerMap = new HashMap<>();
+
+    @Override
+    public String getPacket() {
+        return JsonUtils.encode(this);
     }
 
-    public JsonResponse(int code, String message) {
-        this.retcode = code;
-        this.message = message;
-    }
-
-    public JsonResponse(int code, String message, Object data) {
-        this.retcode = code;
-        this.message = message;
-        this.data = data;
-    }
-
-    public JsonResponse(Object data) {
-        this.data = data;
+    @Override
+    public PacketEnum getType() {
+        return PacketEnum.PlayerList;
     }
 }

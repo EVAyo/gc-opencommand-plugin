@@ -15,29 +15,11 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-package com.github.jie65535.opencommand.json;
+package com.github.jie65535.opencommand.socket.packet;
 
-public final class JsonResponse {
-    public int retcode = 200;
-    public String message = "Success";
-    public Object data;
+// 基本数据包
+public abstract class BasePacket {
+    public abstract String getPacket();
 
-    public JsonResponse() {
-
-    }
-
-    public JsonResponse(int code, String message) {
-        this.retcode = code;
-        this.message = message;
-    }
-
-    public JsonResponse(int code, String message, Object data) {
-        this.retcode = code;
-        this.message = message;
-        this.data = data;
-    }
-
-    public JsonResponse(Object data) {
-        this.data = data;
-    }
+    public abstract PacketEnum getType();
 }

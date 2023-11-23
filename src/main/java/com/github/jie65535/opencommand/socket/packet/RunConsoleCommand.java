@@ -15,29 +15,24 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-package com.github.jie65535.opencommand.json;
+package com.github.jie65535.opencommand.socket.packet;
 
-public final class JsonResponse {
-    public int retcode = 200;
-    public String message = "Success";
-    public Object data;
+import emu.grasscutter.utils.JsonUtils;
 
-    public JsonResponse() {
+public class RunConsoleCommand extends BasePacket {
+    public String command;
 
+    public RunConsoleCommand(String command) {
+        this.command = command;
     }
 
-    public JsonResponse(int code, String message) {
-        this.retcode = code;
-        this.message = message;
+    @Override
+    public String getPacket() {
+        return JsonUtils.encode(this);
     }
 
-    public JsonResponse(int code, String message, Object data) {
-        this.retcode = code;
-        this.message = message;
-        this.data = data;
-    }
-
-    public JsonResponse(Object data) {
-        this.data = data;
+    @Override
+    public PacketEnum getType() {
+        return PacketEnum.RunConsoleCommand;
     }
 }
